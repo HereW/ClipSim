@@ -204,6 +204,7 @@ public:
         cudaFree(dBuffer);
     }      
     
+    // The multiplication of two dense vectors. 
     float dense_vectors_multiplication(Dense_vector<float> denseX, Dense_vector<float> denseY, float alpha = 1.0f) {
         cublasHandle_t     handle = NULL;
         cublasCreate(&handle);
@@ -216,14 +217,16 @@ public:
     
         return s;
     }
-    
+
+    // The addition of two dense vectors. 
     Dense_vector<float> dense_vector_addition(Dense_vector<float> denseX, Dense_vector<float> denseY, float alpha = 1.0f) {
         //--------------------------------------------------------------------------
         parallel_addition << <(denseY.num_rows + MAX_THREAD - 1) / MAX_THREAD, MAX_THREAD >> > (denseY.num_rows, alpha, denseX, denseY);
     
         return denseY;
     }
-    
+
+    // The summation of all the elements in a dense vector. 
     float dense_vector_summation(Dense_vector<float> denseX) {
         cublasHandle_t     handle = NULL;
         cublasCreate(&handle);
@@ -234,6 +237,7 @@ public:
         return hResult[0];
     }
     
+    // The square of norm2 value of a dense vector. 
     float dense_vector_norm2_square(Dense_vector<float> denseX) {
         cublasHandle_t     handle = NULL;
         cublasCreate(&handle);
@@ -244,6 +248,7 @@ public:
         return hResult[0] * hResult[0];
     }
     
+    // The norm2 value of a dense vector. 
     float dense_vector_norm2(Dense_vector<float> denseX) {
         cublasHandle_t     handle = NULL;
         cublasCreate(&handle);
@@ -254,6 +259,7 @@ public:
         return hResult[0];
     }
 
+    // The conversion from CSR format to CSC format. 
     Sparse_CSR sparse_matrix_CSR_to_CSC(Sparse_CSR dM_CSR, cusparseHandle_t& handle) {
         int M_num_nonzeros = dM_CSR.num_nonzeros;
         int M_num_rows = dM_CSR.num_rows;
@@ -283,6 +289,7 @@ public:
         return dM_T;
     }
 
+    // some information of gpu. 
     void process_info(int dev) {
         cout << setiosflags(ios::fixed) << setprecision(2);
         cudaDeviceProp devProp;
@@ -370,6 +377,7 @@ public:
         cudaEventCreate(&stop4);
         cudaEventRecord(start4, 0);
 
+        // Calculate the value array of matrix P (stored in CSR format) in parallel. 
         matrix_P_construction << < MAX_BLOCK, MAX_THREAD >> > (dP_indegrees, dP_columns, dP_values, P_num_nonzeros);
 
         cudaEventRecord(stop4, 0);
@@ -402,14 +410,6 @@ public:
 
     void ClipSim(int u, string outputFile) {
         //--------------------------------------------------------------------------
-        float t_total = 0;
-        cudaEvent_t start_total, stop_total;
-        float elapsedTime_total = 0.0;
-
-        cudaEventCreate(&start_total);
-        cudaEventCreate(&stop_total);
-        cudaEventRecord(start_total, 0);
-        //--------------------------------------------------------------------------
         //--------------------------------------------------------------------------    
         float t_coo2csr = 0;
         cudaEvent_t t_coo2csr_start, t_coo2csr_stop;
@@ -421,6 +421,7 @@ public:
         //--------------------------------------------------------------------------
         cusparseHandle_t     handle = NULL;
         cusparseCreate(&handle);
+        // Convert COO format to CSR format. (only the row array in COO needs to be compressed) 
         cusparseXcoo2csr(handle, dP_COO_rows, P_num_nonzeros, P_num_rows, dP_csrOffsets, CUSPARSE_INDEX_BASE_ZERO);
         //--------------------------------------------------------------------------
         cudaEventRecord(t_coo2csr_stop, 0);
@@ -442,6 +443,7 @@ public:
         cudaEventCreate(&t_csr2csc_stop);
         cudaEventRecord(t_csr2csc_start, 0);
         //--------------------------------------------------------------------------
+        // CSR to CSC. Since we need to use P_T in the calculation of PPR. 
         dP_T = sparse_matrix_CSR_to_CSC(dP, handle);
         //--------------------------------------------------------------------------
         cudaEventRecord(t_csr2csc_stop, 0);
@@ -452,6 +454,14 @@ public:
         cout << "csr2csc takes " << t_csr2csc << " s." << endl;
         //--------------------------------------------------------------------------
         cout << "======CSR and CSC conversion done!======\n" << endl;
+        //--------------------------------------------------------------------------
+        float t_total = 0;
+        cudaEvent_t start_total, stop_total;
+        float elapsedTime_total = 0.0;
+
+        cudaEventCreate(&start_total);
+        cudaEventCreate(&stop_total);
+        cudaEventRecord(start_total, 0);
         //--------------------------------------------------------------------------
         int source = u;
         hVecS = new float[vecS_num_rows]();
@@ -474,6 +484,7 @@ public:
         //--------------------------------------------------------------------------
         dPPR_all = new Dense_vector<float>[L+1];
         //--------------------------------------------------------------------------
+        // Allocate for PPR. 
         for (int i = 0; i < L + 1; i++) {
             float* dPPR_l_ent;
             cudaMalloc((void**)&dPPR_l_ent, vecS_num_rows * sizeof(float));
@@ -484,6 +495,7 @@ public:
             dPPR_all[i] = dPPR_l;
         }
         //--------------------------------------------------------------------------
+        // Calculate PPR. 
         for (int ell = 1; ell < L + 1; ell++) {
             sparse_csr_matrix_dense_vector_multiplication(handle, dP, dPPR_all[ell - 1], dPPR_all[ell],
                 CUSPARSE_OPERATION_NON_TRANSPOSE, sqrtC);
@@ -563,8 +575,17 @@ public:
         cudaEventCreate(&stop);
         cudaEventRecord(start, 0);
 
+        // Usually, the number of vertices is larger than the number of threads. 
+        // Thus, there are more than one vertices corresponding to a thread. 
+        // e.g., there are 3 threads and 8 vertices. 
+        // Thread 0 for vertex 0, 3, 6; thread 1 for vertex 1, 4, 7; thread 2 for vertex 2, 5. 
+        // Then, "dEnd_vert_idx" is [6, 7, 5]. 
         find_end_vert_per_thread << < MAX_BLOCK, MAX_THREAD >> > (dEnd_vert_idx, vecS_num_rows);
 
+        // There are a number of random walks starting from each vertex. 
+        // The number of random walks for each vertex varies according to PPR. 
+        // We determine the number of portions of random walks for each vertex. 
+        // Each portion contains fixed number of random walks. This can reduce the number of atomic operations. 
         // decide_each_vert_portion_walk_num << < MAX_BLOCK, MAX_THREAD >> > (dPortion_walk, dEach_portion_walk_num, dPPR, walk_num, vector_norm2);
         decide_each_vert_portion_walk_num << < MAX_BLOCK, MAX_THREAD >> > (dPortion_walk, dEach_portion_walk_num, dPPR, walk_num);
         gpuErrchk( cudaPeekAtLastError() );
@@ -572,6 +593,8 @@ public:
 
         cudaMemcpy(dPortion_walk_dup, dPortion_walk, vecS_num_rows * sizeof(int), cudaMemcpyDeviceToDevice);
 
+        // Operate random walks in parallel. 
+        // Obtain the number of pairs of random walks meeting at a vertex. 
         parallel_random_walk_v3_2 << < MAX_BLOCK, MAX_THREAD >> > (rand(), dP_T, dEnd_vert_idx, 
                 dPortion_walk, dEach_portion_walk_num, c, dMeets_count, jump_num, dual_flag);
         gpuErrchk( cudaPeekAtLastError() );
@@ -592,6 +615,7 @@ public:
         cudaEventCreate(&stop2);
         cudaEventRecord(start2, 0);
 
+        // Calculate matrix D according to "dMeets_count". 
         calculate_matrix_D << < MAX_BLOCK, MAX_THREAD >> > (dDiag_values, c, dIndegree, dMeets_count, dPortion_walk_dup, dEach_portion_walk_num);
 
         cudaEventRecord(stop2, 0);
@@ -645,6 +669,7 @@ public:
         cudaMalloc((void**)&dVecS_ent, vecS_num_rows * sizeof(float));
         Dense_vector<float> dVecS = { vecS_num_rows, dVecS_ent };
         float transSqrtC = 1.0 / (1.0 - sqrtC);
+        // Calculate the SimRank vector with SpMxV. 
         diag_matrix_dense_vector_multiplication << < (vecS_num_rows + 1023) / 1024, 1024 >> > \
             (dDiag_values, dPPR_all[L], dVecS, transSqrtC);
         //--------------------------------------------------------------------------

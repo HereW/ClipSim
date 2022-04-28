@@ -190,20 +190,22 @@ __global__ void parallel_random_walk_v3_2 (long rand, Sparse_CSR dM, Dense_vecto
     int jump_pos;
     int work_vert;
 
-    while (jump_count < jump_number) {
+    if (!dual_seeds) {
+        while (jump_count < jump_number) {
 
-        jump_pos = curand(&w_state) % TOTAL_WARPS;
-        work_vert = end_vert_idx.entries[jump_pos];
-        while ((work_vert >= TOTAL_WARPS) && (portion_walk[work_vert] <= 0))
-            work_vert -= TOTAL_WARPS;
+            jump_pos = curand(&w_state) % TOTAL_WARPS;
+            work_vert = end_vert_idx.entries[jump_pos];
+            while ((work_vert >= TOTAL_WARPS) && (portion_walk[work_vert] <= 0))
+                work_vert -= TOTAL_WARPS;
 
-        if (portion_walk[work_vert] > 0) {
-            atomicAdd(&(portion_walk[work_vert]), -1);
-            unsigned int meet_count_v = 0;
-            single_vertex_random_walk_v2(state, w_state, dM, work_vert, c_v, each_portion_walk_num[work_vert], meet_count_v);
-            atomicAdd(&(meet_count[work_vert]), meet_count_v);
+            if (portion_walk[work_vert] > 0) {
+                atomicAdd(&(portion_walk[work_vert]), -1);
+                unsigned int meet_count_v = 0;
+                single_vertex_random_walk_v2(state, w_state, dM, work_vert, c_v, each_portion_walk_num[work_vert], meet_count_v);
+                atomicAdd(&(meet_count[work_vert]), meet_count_v);
+            }
+
+            jump_count += 1;
         }
-
-        jump_count += 1;
     }
 }

@@ -62,7 +62,7 @@ int main(int argc, char** argv) {
     int idx_base = 0;
     string ldim;
     int dev = 0;
-    int jump_num = 20;
+    int jump_num = 5;
     bool dual_flag = true;
     string algo = "ClipSim";
     if (argc < 1) {
